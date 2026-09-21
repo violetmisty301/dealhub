@@ -109,6 +109,53 @@ def collect_quasarzone():
     print(f"[quasarzone] parsed deals: {len(results)}")
     return results
 
+def collect_ppomppu():
+    urls = [
+        "https://www.ppomppu.co.kr/zboard/zboard.php?id=ppomppu",
+        "https://m.ppomppu.co.kr/new/bbs_list.php?id=ppomppu",
+    ]
+    results, seen = [], set()
+    for url in urls:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=25)
+            print(f"[ppomppu] HTTP {r.status_code}, {len(r.text):,} bytes")
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "lxml")
+            for a in soup.find_all("a", href=True):
+                href = a.get("href", "")
+                if not ("view.php" in href or "bbs_view.php" in href):
+                    continue
+                title = clean(a.get_text(" ", strip=True))
+                if len(title) < 5:
+                    continue
+                full_url = urljoin(url, href)
+                if full_url in seen:
+                    continue
+                block = a
+                text = title
+                for _ in range(5):
+                    block = getattr(block, "parent", None)
+                    if block is None: break
+                    t = clean(block.get_text(" ", strip=True))
+                    if 10 < len(t) < 700: text = t
+                m = re.search(r"([\d,]{2,})\s*원", text)
+                price = int(m.group(1).replace(",", "")) if m else None
+                ident = re.search(r"(?:no=|num=)(\d+)", full_url)
+                results.append({
+                    "id": "p" + (ident.group(1) if ident else str(abs(hash(full_url)))),
+                    "source": "ppomppu", "source_name": "뽐뿌",
+                    "title": title, "normalized_title": normalize_title(title),
+                    "price": price, "shop": "", "category": "기타",
+                    "url": full_url, "meta": text[:500],
+                    "collected_at": datetime.now(timezone.utc).isoformat(),
+                })
+                seen.add(full_url)
+            if results: break
+        except Exception as e:
+            print(f"[ppomppu] {type(e).__name__}: {e}")
+    print(f"[ppomppu] parsed deals: {len(results)}")
+    return results[:40]
+
 def update_history(deals):
     old = load_json(HISTORY_FILE, {"items": {}})
     items = old.get("items", {})
@@ -144,6 +191,11 @@ def main():
         deals.extend(collect_quasarzone())
     except Exception as e:
         errors.append(f"quasarzone: {type(e).__name__}: {e}")
+        print("[ERROR]", errors[-1])
+    try:
+        deals.extend(collect_ppomppu())
+    except Exception as e:
+        errors.append(f"ppomppu: {type(e).__name__}: {e}")
         print("[ERROR]", errors[-1])
 
     # 중복 URL 제거
